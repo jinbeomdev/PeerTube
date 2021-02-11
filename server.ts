@@ -158,7 +158,8 @@ morgan.token('user-agent', (req: express.Request) => {
   return req.get('user-agent')
 })
 app.use(morgan('combined', {
-  stream: { write: logger.info.bind(logger) }
+  stream: { write: logger.info.bind(logger) },
+  skip: req => CONFIG.LOG.LOG_PING_REQUESTS === false && req.originalUrl === '/api/v1/ping'
 }))
 
 // For body requests
@@ -204,7 +205,8 @@ app.use('/', staticRouter)
 app.use('/', lazyStaticRouter)
 
 // Client files, last valid routes!
-if (cli.client) app.use('/', clientsRouter)
+const cliOptions = cli.opts()
+if (cliOptions.client) app.use('/', clientsRouter)
 
 // ----------- Errors -----------
 
@@ -276,14 +278,14 @@ async function startApplication () {
   updateStreamingPlaylistsInfohashesIfNeeded()
     .catch(err => logger.error('Cannot update streaming playlist infohashes.', { err }))
 
-  if (cli.plugins) await PluginManager.Instance.registerPluginsAndThemes()
+  if (cliOptions.plugins) await PluginManager.Instance.registerPluginsAndThemes()
 
   LiveManager.Instance.init()
   if (CONFIG.LIVE.ENABLED) LiveManager.Instance.run()
 
   // Make server listening
   server.listen(port, hostname, () => {
-    logger.info('Server listening on %s:%d', hostname, port)
+    logger.info('HTTP server listening on %s:%d', hostname, port)
     logger.info('Web server: %s', WEBSERVER.URL)
 
     Hooks.runAction('action:application.listening')

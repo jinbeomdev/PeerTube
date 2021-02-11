@@ -12,6 +12,7 @@ import {
   Notifier,
   PeerTubeSocket,
   RestExtractor,
+  ScreenService,
   ServerService,
   UserService
 } from '@app/core'
@@ -126,14 +127,10 @@ export class VideoWatchComponent implements OnInit, OnDestroy {
     private hotkeysService: HotkeysService,
     private hooks: HooksService,
     private peertubeSocket: PeerTubeSocket,
+    private screenService: ScreenService,
     private location: PlatformLocation,
     @Inject(LOCALE_ID) private localeId: string
-  ) {
-    this.tooltipLike = $localize`Like this video`
-    this.tooltipDislike = $localize`Dislike this video`
-    this.tooltipSupport = $localize`Support options for this video`
-    this.tooltipSaveToPlaylist = $localize`Save to playlist`
-  }
+  ) { }
 
   get user () {
     return this.authService.getUser()
@@ -144,6 +141,14 @@ export class VideoWatchComponent implements OnInit, OnDestroy {
   }
 
   async ngOnInit () {
+    // Hide the tooltips for unlogged users in mobile view, this adds confusion with the popover
+    if (this.user || !this.screenService.isInMobileView()) {
+      this.tooltipLike = $localize`Like this video`
+      this.tooltipDislike = $localize`Dislike this video`
+      this.tooltipSupport = $localize`Support options for this video`
+      this.tooltipSaveToPlaylist = $localize`Save to playlist`
+    }
+
     PeertubePlayerManager.initState()
 
     this.serverConfig = this.serverService.getTmpConfig()
@@ -404,7 +409,7 @@ export class VideoWatchComponent implements OnInit, OnDestroy {
       this.videoCaptionService.listCaptions(videoId)
     ])
       .pipe(
-        // If 401, the video is private or blocked so redirect to 404
+        // If 400, 403 or 404, the video is private or blocked so redirect to 404
         catchError(err => {
           if (err.body.errorCode === ServerErrorCode.DOES_NOT_RESPECT_FOLLOW_CONSTRAINTS && err.body.originUrl) {
             const search = window.location.search
@@ -416,9 +421,8 @@ export class VideoWatchComponent implements OnInit, OnDestroy {
               $localize`Redirection`
             ).then(res => {
               if (res === false) {
-                return this.restExtractor.redirectTo404IfNotFound(err, [
+                return this.restExtractor.redirectTo404IfNotFound(err, 'video', [
                   HttpStatusCode.BAD_REQUEST_400,
-                  HttpStatusCode.UNAUTHORIZED_401,
                   HttpStatusCode.FORBIDDEN_403,
                   HttpStatusCode.NOT_FOUND_404
                 ])
@@ -428,9 +432,8 @@ export class VideoWatchComponent implements OnInit, OnDestroy {
             })
           }
 
-          return this.restExtractor.redirectTo404IfNotFound(err, [
+          return this.restExtractor.redirectTo404IfNotFound(err, 'video', [
             HttpStatusCode.BAD_REQUEST_400,
-            HttpStatusCode.UNAUTHORIZED_401,
             HttpStatusCode.FORBIDDEN_403,
             HttpStatusCode.NOT_FOUND_404
           ])
@@ -464,10 +467,9 @@ export class VideoWatchComponent implements OnInit, OnDestroy {
 
     this.playlistService.getVideoPlaylist(playlistId)
       .pipe(
-        // If 401, the video is private or blocked so redirect to 404
-        catchError(err => this.restExtractor.redirectTo404IfNotFound(err, [
+        // If 400 or 403, the video is private or blocked so redirect to 404
+        catchError(err => this.restExtractor.redirectTo404IfNotFound(err, 'video', [
           HttpStatusCode.BAD_REQUEST_400,
-          HttpStatusCode.UNAUTHORIZED_401,
           HttpStatusCode.FORBIDDEN_403,
           HttpStatusCode.NOT_FOUND_404
         ]))

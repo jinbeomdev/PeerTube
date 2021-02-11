@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: PeerTube
-  version: 3.0.0-rc.1
+  version: 3.0.1
   contact:
     name: PeerTube Community
     url: 'https://joinpeertube.org'
@@ -933,6 +933,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/start'
         - $ref: '#/components/parameters/count'
+        - $ref: '#/components/parameters/search'
       responses:
         '200':
           description: successful operation
@@ -3490,6 +3491,7 @@ components:
         - -views
         - -likes
         - -trending
+        - -hot
     videosSearchSort:
       name: sort
       in: query
@@ -3896,6 +3898,13 @@ components:
         - 2
       description: 'The user role (Admin = `0`, Moderator = `1`, User = `2`)'
       example: 2
+    UserAdminFlags:
+      type: integer
+      enum:
+        - 0
+        - 1
+      description: 'Admin flags for the user (None = `0`, Bypass video blacklist = `1`)'
+      example: 1
 
     VideoStateConstant:
       properties:
@@ -3941,7 +3950,7 @@ components:
       properties:
         id:
           type: integer
-          description: 'Video resolution (240, 360, 720 ...)'
+          description: 'Video resolution (240, 360, 720, 1080, 1440 or 2160)'
           example: 240
         label:
           type: string
@@ -4829,6 +4838,8 @@ components:
                   type: boolean
                 1080p:
                   type: boolean
+                1440p:
+                  type: boolean
                 2160p:
                   type: boolean
             hls:
@@ -5018,6 +5029,9 @@ components:
           type: string
           format: email
           description: The user email
+        pluginAuth:
+          type: string
+          description: Auth plugin to use to authenticate the user
         theme:
           type: string
           description: Theme enabled by this user
@@ -5095,8 +5109,13 @@ components:
         videoQuotaDaily:
           type: integer
           description: The user daily video quota
+        channelName:
+          type: string
+          description: The user default channel username
         role:
           $ref: '#/components/schemas/UserRole'
+        adminFlags:
+          $ref: '#/components/schemas/UserAdminFlags'
       required:
         - username
         - password
@@ -5113,20 +5132,26 @@ components:
           type: string
           format: email
           description: The updated email of the user
+        emailVerified:
+          type: boolean
+          description: Set the email as verified
         videoQuota:
           type: integer
           description: The updated video quota of the user
         videoQuotaDaily:
           type: integer
           description: The updated daily video quota of the user
+        pluginAuth:
+          type: string
+          nullable: true
+          description: The auth plugin to use to authenticate the user
+          example: 'peertube-plugin-auth-saml2'
         role:
           $ref: '#/components/schemas/UserRole'
+        adminFlags:
+          $ref: '#/components/schemas/UserAdminFlags'
       required:
         - id
-        - email
-        - videoQuota
-        - videoQuotaDaily
-        - role
     UpdateMe:
       properties:
         password:

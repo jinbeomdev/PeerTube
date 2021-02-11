@@ -194,7 +194,10 @@ function getAccountVideos (
   start: number,
   count: number,
   sort?: string,
-  query: { nsfw?: boolean } = {}
+  query: {
+    nsfw?: boolean
+    search?: string
+  } = {}
 ) {
   const path = '/api/v1/accounts/' + accountName + '/videos'
 
@@ -335,7 +338,7 @@ async function checkVideoFilesWereRemoved (
 
     const files = await readdir(directoryPath)
     for (const file of files) {
-      expect(file).to.not.contain(videoUUID)
+      expect(file, `File ${file} should not exist in ${directoryPath}`).to.not.contain(videoUUID)
     }
   }
 }
@@ -638,10 +641,12 @@ async function uploadVideoAndGetId (options: {
   nsfw?: boolean
   privacy?: VideoPrivacy
   token?: string
+  fixture?: string
 }) {
   const videoAttrs: any = { name: options.videoName }
   if (options.nsfw) videoAttrs.nsfw = options.nsfw
   if (options.privacy) videoAttrs.privacy = options.privacy
+  if (options.fixture) videoAttrs.fixture = options.fixture
 
   const res = await uploadVideo(options.server.url, options.token || options.server.accessToken, videoAttrs)
 

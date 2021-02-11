@@ -7,6 +7,7 @@ import { join } from 'path'
 import { randomInt } from '../../core-utils/miscs/miscs'
 import { VideoChannel } from '../../models/videos'
 import { buildServerDirectory, getFileSize, isGithubCI, root, wait } from '../miscs/miscs'
+import { makeGetRequest } from '../requests/requests'
 
 interface ServerInfo {
   app: ChildProcess
@@ -145,7 +146,7 @@ async function flushAndRunServer (serverNumber: number, configOverride?: Object,
 async function runServer (server: ServerInfo, configOverrideArg?: any, args = [], options: RunServerOptions = {}) {
   // These actions are async so we need to be sure that they have both been done
   const serverRunString = {
-    'Server listening': false
+    'HTTP server listening': false
   }
   const key = 'Database peertube_test' + server.internalServerNumber + ' is ready'
   serverRunString[key] = false
@@ -271,8 +272,12 @@ async function reRunServer (server: ServerInfo, configOverride?: any) {
   return server
 }
 
-function checkTmpIsEmpty (server: ServerInfo) {
-  return checkDirectoryIsEmpty(server, 'tmp', [ 'plugins-global.css' ])
+async function checkTmpIsEmpty (server: ServerInfo) {
+  await checkDirectoryIsEmpty(server, 'tmp', [ 'plugins-global.css', 'hls' ])
+
+  if (await pathExists(join('test' + server.internalServerNumber, 'tmp', 'hls'))) {
+    await checkDirectoryIsEmpty(server, 'tmp/hls')
+  }
 }
 
 async function checkDirectoryIsEmpty (server: ServerInfo, directory: string, exceptions: string[] = []) {
@@ -347,6 +352,14 @@ async function getServerFileSize (server: ServerInfo, subPath: string) {
   return getFileSize(path)
 }
 
+function makePingRequest (server: ServerInfo) {
+  return makeGetRequest({
+    url: server.url,
+    path: '/api/v1/ping',
+    statusCodeExpected: 200
+  })
+}
+
 // ---------------------------------------------------------------------------
 
 export {
@@ -358,6 +371,7 @@ export {
   cleanupTests,
   flushAndRunMultipleServers,
   flushTests,
+  makePingRequest,
   flushAndRunServer,
   killallServers,
   reRunServer,

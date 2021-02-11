@@ -96,10 +96,11 @@ import {
   MVideoWithRights
 } from '../../types/models'
 import { MThumbnail } from '../../types/models/video/thumbnail'
-import { MVideoFile, MVideoFileRedundanciesOpt, MVideoFileStreamingPlaylistVideo } from '../../types/models/video/video-file'
+import { MVideoFile, MVideoFileStreamingPlaylistVideo } from '../../types/models/video/video-file'
 import { VideoAbuseModel } from '../abuse/video-abuse'
 import { AccountModel } from '../account/account'
 import { AccountVideoRateModel } from '../account/account-video-rate'
+import { UserModel } from '../account/user'
 import { UserVideoHistoryModel } from '../account/user-video-history'
 import { ActorModel } from '../activitypub/actor'
 import { AvatarModel } from '../avatar/avatar'
@@ -150,8 +151,6 @@ export type ForAPIOptions = {
   ids?: number[]
 
   videoPlaylistId?: number
-
-  withFiles?: boolean
 
   withAccountBlockerIds?: number[]
 }
@@ -217,13 +216,6 @@ export type AvailableForListIDsOptions = {
           [Op.in]: options.ids
         }
       }
-    }
-
-    if (options.withFiles === true) {
-      include.push({
-        model: VideoFileModel,
-        required: true
-      })
     }
 
     if (options.videoPlaylistId) {
@@ -353,7 +345,6 @@ export type AvailableForListIDsOptions = {
       include: [
         {
           model: VideoFileModel,
-          separate: true, // We may have multiple files, having multiple redundancies so let's separate this join
           required: false,
           include: subInclude
         }
@@ -380,7 +371,6 @@ export type AvailableForListIDsOptions = {
       include: [
         {
           model: VideoStreamingPlaylistModel.unscoped(),
-          separate: true, // We may have multiple streaming playlists, having multiple redundancies so let's separate this join
           required: false,
           include: subInclude
         }
@@ -1004,13 +994,15 @@ export class VideoModel extends Model {
     return result.map(v => v.id)
   }
 
-  static listUserVideosForApi (
-    accountId: number,
-    start: number,
-    count: number,
-    sort: string,
+  static listUserVideosForApi (options: {
+    accountId: number
+    start: number
+    count: number
+    sort: string
     search?: string
-  ) {
+  }) {
+    const { accountId, start, count, sort, search } = options
+
     function buildBaseQuery (): FindOptions {
       let baseQuery = {
         offset: start,
@@ -1087,6 +1079,7 @@ export class VideoModel extends Model {
     user?: MUserAccountId
     historyOfUser?: MUserId
     countVideos?: boolean
+    search?: string
   }) {
     if ((options.filter === 'all-local' || options.filter === 'all') && !options.user.hasRight(UserRight.SEE_ALL_VIDEOS)) {
       throw new Error('Try to filter all-local but no user has not the see all videos right')
@@ -1095,6 +1088,9 @@ export class VideoModel extends Model {
     const trendingDays = options.sort.endsWith('trending')
       ? CONFIG.TRENDING.VIDEOS.INTERVAL_DAYS
       : undefined
+    let trendingAlgorithm
+    if (options.sort.endsWith('hot')) trendingAlgorithm = 'hot'
+    if (options.sort.endsWith('best')) trendingAlgorithm = 'best'
 
     const serverActor = await getServerActor()
 
@@ -1123,7 +1119,9 @@ export class VideoModel extends Model {
       includeLocalVideos: options.includeLocalVideos,
       user: options.user,
       historyOfUser: options.historyOfUser,
-      trendingDays
+      trendingDays,
+      trendingAlgorithm,
+      search: options.search
     }
 
     return VideoModel.getAvailableForApi(queryOptions, options.countVideos)
@@ -1192,6 +1190,39 @@ export class VideoModel extends Model {
     }
 
     return VideoModel.count(options)
+  }
+
+  static countVideosUploadedByUserSince (userId: number, since: Date) {
+    const options = {
+      include: [
+        {
+          model: VideoChannelModel.unscoped(),
+          required: true,
+          include: [
+            {
+              model: AccountModel.unscoped(),
+              required: true,
+              include: [
+                {
+                  model: UserModel.unscoped(),
+                  required: true,
+                  where: {
+                    id: userId
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      where: {
+        createdAt: {
+          [Op.gte]: since
+        }
+      }
+    }
+
+    return VideoModel.unscoped().count(options)
   }
 
   static countLivesOfAccount (accountId: number) {
@@ -1584,8 +1615,19 @@ export class VideoModel extends Model {
     const avatarKeys = [ 'id', 'filename', 'fileUrl', 'onDisk', 'createdAt', 'updatedAt' ]
     const actorKeys = [ 'id', 'preferredUsername', 'url', 'serverId', 'avatarId' ]
     const serverKeys = [ 'id', 'host' ]
-    const videoFileKeys = [ 'id', 'createdAt', 'updatedAt', 'resolution', 'size', 'extname', 'infoHash', 'fps', 'videoId' ]
-    const videoStreamingPlaylistKeys = [ 'id' ]
+    const videoFileKeys = [
+      'id',
+      'createdAt',
+      'updatedAt',
+      'resolution',
+      'size',
+      'extname',
+      'infoHash',
+      'fps',
+      'videoId',
+      'videoStreamingPlaylistId'
+    ]
+    const videoStreamingPlaylistKeys = [ 'id', 'type', 'playlistUrl' ]
     const videoKeys = [
       'id',
       'uuid',
@@ -1614,17 +1656,18 @@ export class VideoModel extends Model {
       'createdAt',
       'updatedAt'
     ]
+    const buildOpts = { raw: true }
 
     function buildActor (rowActor: any) {
       const avatarModel = rowActor.Avatar.id !== null
-        ? new AvatarModel(pick(rowActor.Avatar, avatarKeys))
+        ? new AvatarModel(pick(rowActor.Avatar, avatarKeys), buildOpts)
         : null
 
       const serverModel = rowActor.Server.id !== null
-        ? new ServerModel(pick(rowActor.Server, serverKeys))
+        ? new ServerModel(pick(rowActor.Server, serverKeys), buildOpts)
         : null
 
-      const actorModel = new ActorModel(pick(rowActor, actorKeys))
+      const actorModel = new ActorModel(pick(rowActor, actorKeys), buildOpts)
       actorModel.Avatar = avatarModel
       actorModel.Server = serverModel
 
@@ -1635,16 +1678,16 @@ export class VideoModel extends Model {
       if (!videosMemo[row.id]) {
         // Build Channel
         const channel = row.VideoChannel
-        const channelModel = new VideoChannelModel(pick(channel, [ 'id', 'name', 'description', 'actorId' ]))
+        const channelModel = new VideoChannelModel(pick(channel, [ 'id', 'name', 'description', 'actorId' ]), buildOpts)
         channelModel.Actor = buildActor(channel.Actor)
 
         const account = row.VideoChannel.Account
-        const accountModel = new AccountModel(pick(account, [ 'id', 'name' ]))
+        const accountModel = new AccountModel(pick(account, [ 'id', 'name' ]), buildOpts)
         accountModel.Actor = buildActor(account.Actor)
 
         channelModel.Account = accountModel
 
-        const videoModel = new VideoModel(pick(row, videoKeys))
+        const videoModel = new VideoModel(pick(row, videoKeys), buildOpts)
         videoModel.VideoChannel = channelModel
 
         videoModel.UserVideoHistories = []
@@ -1660,28 +1703,28 @@ export class VideoModel extends Model {
       const videoModel = videosMemo[row.id]
 
       if (row.userVideoHistory?.id && !historyDone.has(row.userVideoHistory.id)) {
-        const historyModel = new UserVideoHistoryModel(pick(row.userVideoHistory, [ 'id', 'currentTime' ]))
+        const historyModel = new UserVideoHistoryModel(pick(row.userVideoHistory, [ 'id', 'currentTime' ]), buildOpts)
         videoModel.UserVideoHistories.push(historyModel)
 
         historyDone.add(row.userVideoHistory.id)
       }
 
       if (row.Thumbnails?.id && !thumbnailsDone.has(row.Thumbnails.id)) {
-        const thumbnailModel = new ThumbnailModel(pick(row.Thumbnails, [ 'id', 'type', 'filename' ]))
+        const thumbnailModel = new ThumbnailModel(pick(row.Thumbnails, [ 'id', 'type', 'filename' ]), buildOpts)
         videoModel.Thumbnails.push(thumbnailModel)
 
         thumbnailsDone.add(row.Thumbnails.id)
       }
 
       if (row.VideoFiles?.id && !videoFilesDone.has(row.VideoFiles.id)) {
-        const videoFileModel = new VideoFileModel(pick(row.VideoFiles, videoFileKeys))
+        const videoFileModel = new VideoFileModel(pick(row.VideoFiles, videoFileKeys), buildOpts)
         videoModel.VideoFiles.push(videoFileModel)
 
         videoFilesDone.add(row.VideoFiles.id)
       }
 
       if (row.VideoStreamingPlaylists?.id && !videoStreamingPlaylistMemo[row.VideoStreamingPlaylists.id]) {
-        const streamingPlaylist = new VideoStreamingPlaylistModel(pick(row.VideoStreamingPlaylists, videoStreamingPlaylistKeys))
+        const streamingPlaylist = new VideoStreamingPlaylistModel(pick(row.VideoStreamingPlaylists, videoStreamingPlaylistKeys), buildOpts)
         streamingPlaylist.VideoFiles = []
 
         videoModel.VideoStreamingPlaylists.push(streamingPlaylist)
@@ -1692,7 +1735,7 @@ export class VideoModel extends Model {
       if (row.VideoStreamingPlaylists?.VideoFiles?.id && !videoFilesDone.has(row.VideoStreamingPlaylists.VideoFiles.id)) {
         const streamingPlaylist = videoStreamingPlaylistMemo[row.VideoStreamingPlaylists.id]
 
-        const videoFileModel = new VideoFileModel(pick(row.VideoStreamingPlaylists.VideoFiles, videoFileKeys))
+        const videoFileModel = new VideoFileModel(pick(row.VideoStreamingPlaylists.VideoFiles, videoFileKeys), buildOpts)
         streamingPlaylist.VideoFiles.push(videoFileModel)
 
         videoFilesDone.add(row.VideoStreamingPlaylists.VideoFiles.id)
@@ -1731,6 +1774,7 @@ export class VideoModel extends Model {
   }
 
   getQualityFileBy<T extends MVideoWithFile> (this: T, fun: (files: MVideoFile[], it: (file: MVideoFile) => number) => MVideoFile) {
+    // We first transcode to WebTorrent format, so try this array first
     if (Array.isArray(this.VideoFiles) && this.VideoFiles.length !== 0) {
       const file = fun(this.VideoFiles, file => file.resolution)
 
@@ -1763,6 +1807,10 @@ export class VideoModel extends Model {
     if (!file) return undefined
 
     return Object.assign(file, { Video: this })
+  }
+
+  hasWebTorrentFiles () {
+    return Array.isArray(this.VideoFiles) === true && this.VideoFiles.length !== 0
   }
 
   async addAndSaveThumbnail (thumbnail: MThumbnail, transaction: Transaction) {
@@ -1839,17 +1887,21 @@ export class VideoModel extends Model {
 
   getFormattedVideoFilesJSON (): VideoFile[] {
     const { baseUrlHttp, baseUrlWs } = this.getBaseUrls()
-    let files: MVideoFileRedundanciesOpt[] = []
+    let files: VideoFile[] = []
 
     if (Array.isArray(this.VideoFiles)) {
-      files = files.concat(this.VideoFiles)
+      const result = videoFilesModelToFormattedJSON(this, baseUrlHttp, baseUrlWs, this.VideoFiles)
+      files = files.concat(result)
     }
 
     for (const p of (this.VideoStreamingPlaylists || [])) {
-      files = files.concat(p.VideoFiles || [])
+      p.Video = this
+
+      const result = videoFilesModelToFormattedJSON(p, baseUrlHttp, baseUrlWs, p.VideoFiles)
+      files = files.concat(result)
     }
 
-    return videoFilesModelToFormattedJSON(this, baseUrlHttp, baseUrlWs, files)
+    return files
   }
 
   toActivityPubObject (this: MVideoAP): VideoObject {

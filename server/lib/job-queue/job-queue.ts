@@ -1,5 +1,6 @@
 import * as Bull from 'bull'
 import { jobStates } from '@server/helpers/custom-validators/jobs'
+import { CONFIG } from '@server/initializers/config'
 import { processVideoRedundancy } from '@server/lib/job-queue/handlers/video-redundancy'
 import {
   ActivitypubFollowPayload,
@@ -47,6 +48,7 @@ type CreateJobArgument =
 
 type CreateJobOptions = {
   delay?: number
+  priority?: number
 }
 
 const handlers: { [id in JobType]: (job: Bull.Job) => Promise<any> } = {
@@ -104,11 +106,11 @@ class JobQueue {
       }
     }
 
-    for (const handlerName of Object.keys(handlers)) {
+    for (const handlerName of (Object.keys(handlers) as JobType[])) {
       const queue = new Bull(handlerName, queueOptions)
       const handler = handlers[handlerName]
 
-      queue.process(JOB_CONCURRENCY[handlerName], handler)
+      queue.process(this.getJobConcurrency(handlerName), handler)
            .catch(err => logger.error('Error in job queue processor %s.', handlerName, { err }))
 
       queue.on('failed', (job, err) => {
@@ -148,6 +150,7 @@ class JobQueue {
       backoff: { delay: 60 * 1000, type: 'exponential' },
       attempts: JOB_ATTEMPTS[obj.type],
       timeout: JOB_TTL[obj.type],
+      priority: options.priority,
       delay: options.delay
     }
 
@@ -231,6 +234,13 @@ class JobQueue {
     if (!jobType) return jobTypes
 
     return jobTypes.filter(t => t === jobType)
+  }
+
+  private getJobConcurrency (jobType: JobType) {
+    if (jobType === 'video-transcoding') return CONFIG.TRANSCODING.CONCURRENCY
+    if (jobType === 'video-import') return CONFIG.IMPORT.VIDEOS.CONCURRENCY
+
+    return JOB_CONCURRENCY[jobType]
   }
 
   static get Instance () {
